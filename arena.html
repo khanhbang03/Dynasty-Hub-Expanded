@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Dynasty Arena — Physics Battle Simulator</title>
+<style>
+  :root{--bg:#071428;--card:rgba(255,255,255,0.03);--muted:#9fb2c8}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,var(--bg),#021021);color:#fff;overflow:hidden}
+  .top{display:flex;gap:12px;align-items:center;padding:12px 16px}
+  .title{font-weight:800;font-size:18px}
+  .controls{display:flex;gap:8px;align-items:center;margin-left:auto}
+  .panel{background:var(--card);padding:10px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.5)}
+  select,input,button{background:transparent;border:1px solid rgba(255,255,255,0.06);color:#fff;padding:6px;border-radius:8px}
+  button.btn{cursor:pointer;padding:8px 12px;background:linear-gradient(90deg,#ffd86b,#ff9a6b);color:#000;font-weight:700;border:0}
+  #arenaWrap{display:flex;height:calc(100% - 72px)}
+  #leftCol{width:360px;padding:12px;box-sizing:border-box;overflow:auto}
+  #canvasCol{flex:1;display:flex;align-items:center;justify-content:center;position:relative}
+  #arena{background:linear-gradient(180deg,#0b2638,#051221);border-radius:10px;box-shadow:0 20px 80px rgba(0,0,0,0.6)}
+  #hud{position:absolute;left:18px;top:18px;z-index:30}
+  .stat{margin:6px 0;color:var(--muted);font-size:13px}
+  .row{display:flex;gap:8px;align-items:center;margin:6px 0}
+  .small{font-size:13px;color:var(--muted)}
+  #leaderboard{margin-top:12px;background:rgba(255,255,255,0.02);padding:8px;border-radius:8px}
+  .unit-btn{padding:8px;border-radius:8px;border:0;background:rgba(255,255,255,0.04);cursor:pointer}
+  #log{height:120px;overflow:auto;background:rgba(0,0,0,0.25);padding:8px;border-radius:8px;margin-top:8px;font-size:13px;color:#e6f7ff}
+  footer{position:absolute;right:14px;bottom:10px;color:var(--muted);font-size:12px}
+  @media (max-width:900px){ #leftCol{width:100%;height:280px} #arenaWrap{flex-direction:column} }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="title">⚔️ Dynasty Arena — Physics Battle Simulator</div>
+    <div class="controls panel">
+      Left: <select id="leftTeam"></select>
+      Right: <select id="rightTeam"></select>
+      <span style="margin-left:8px">Speed <input id="speed" type="range" min="0.5" max="2.5" step="0.1" value="1" style="width:100px"></span>
+    </div>
+  </div>
+
+  <div id="arenaWrap">
+    <div id="leftCol">
+      <div class="panel">
+        <div class="row"><strong>Spawn Unit</strong></div>
+        <div class="row">
+          <select id="unitType">
+            <option value="soldier">Soldier (melee)</option>
+            <option value="archer">Archer (ranged)</option>
+            <option value="cavalry">Cavalry (charge)</option>
+          </select>
+          <button id="spawnLeft" class="btn">Spawn Left</button>
+          <button id="spawnRight" class="btn">Spawn Right</button>
+        </div>
+
+        <div class="row"><button id="superLeft" class="btn">Super Left</button> <button id="superRight" class="btn">Super Right</button></div>
+
+        <div class="row"><label class="small">Auto spawn</label><input id="autoToggle" type="checkbox"></div>
+        <div class="row"><button id="resetBtn" class="btn">Reset Battle</button></div>
+
+        <div class="stat">Left alive: <span id="leftCount">0</span> • Right alive: <span id="rightCount">0</span></div>
+
+        <div id="leaderboard" class="small"><strong>Leaderboard</strong>
+          <div id="lbList"></div>
+          <div style="margin-top:6px"><button id="clearLB" class="unit-btn">Clear LB</button></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div class="small"><strong>Unit Stats Preview</strong></div>
+        <div id="statBox" class="small">
+          <!-- filled dynamically -->
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div class="small"><strong>Battle Log</strong></div>
+        <div id="log"></div>
+      </div>
+    </div>
+
+    <div id="canvasCol">
+      <div id="arena" style="width:1100px;height:640px;">
+        <canvas id="c" width="1100" height="640"></canvas>
+        <div id="hud" class="panel">
+          <div class="small">Round: <span id="round">1</span></div>
+          <div class="small">Time: <span id="time">0.0</span>s</div>
+        </div>
+        <footer>Tip: archers fire projectiles; cavalry have momentum. Physics approximated for fun.</footer>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* Arena — physics battle simulator
+   - simple circle-body physics
+   - elastic collisions with damage
+   - projectiles for archers
+   - super moves: themed per dynasty
+   - leaderboard persisted in localStorage
+*/
+
+// ---------- Config & Teams ----------
+const DYNASTIES = {
+  'Le Van Lam': { color:'#ffd86b', special:'scrolls' },
+  'Simeon Hansen': { color:'#7be1ff', special:'holo' },
+  'Pham Hoang Hai': { color:'#9ad0ff', special:'storm' },
+  'Tran Khoi Nguyen': { color:'#ff8a8a', special:'fireworks' },
+  'Pham Bich Thuy': { color:'#ffb4e6', special:'flowers' },
+  'Tran Hoang Nam': { color:'#ffd86b', special:'nam_super' },
+  'Quach Duy Truong': { color:'#9affb0', special:'quach_super' },
+  'Nguyen Minh Tung': { color:'#b4d2ff', special:'tung_super' },
+  'National University of Hanoi': { color:'#cfaaff', special:'uni_super' }
+};
+
+// allow selecting those keys
+const TEAM_KEYS = Object.keys(DYNASTIES);
+
+// ---------- Canvas & loop ----------
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = canvas.width, H = canvas.height;
+function resize(){ /* canvas is fixed size here; if you change, implement */ }
+resize();
+
+// scaling factor
+let timeScale = 1;
+
+// ---------- Simulation state ----------
+let entities = [];   // unit bodies and projectiles
+let projectiles = [];
+let nextId = 1;
+let round = 1;
+let elapsed = 0;
+let autoInterval = null;
+let autoSpawn = false;
+let leaderboard = JSON.parse(localStorage.getItem('arena_leaderboard_v1') || '{}');
+
+// ---------- Utility ----------
+function rand(a,b){ return a + Math.random()*(b-a); }
+function now(){ return performance.now(); }
+function log(s){ const el = document.getElementById('log'); el.innerText = (s + '\\n') + el.innerText; }
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
+// ---------- Unit templates ----------
+const UNIT_TEMPLATES = {
+  soldier: { radius:14, mass:1.2, speed:0.7, hp:100, attack:18, attackRange:26, attackCooldown:800, colorDelta:0 },
+  archer:  { radius:12, mass:0.9, speed:0.6, hp:80, attack:14, attackRange:240, attackCooldown:1200, colorDelta:0 },
+  cavalry: { radius:16, mass:1.6, speed:1.4, hp:140, attack:24, attackRange:30, attackCooldown:1100, colorDelta:0 }
+};
+
+// ---------- Entity factory ----------
+function createUnit(team, side, type){
+  const tpl = UNIT_TEMPLATES[type];
+  const x = (side==='left') ? rand(80,200) : rand(W-200, W-80);
+  const y = H - 80 - tpl.radius;
+  const dir = (side==='left') ? 1 : -1;
+  const ent = {
+    id: nextId++,
+    kind:'unit',
+    team, side, type,
+    x, y, vx:dir * tpl.speed * (1 + rand(-0.2,0.2)), vy:0,
+    ax:0, ay:0,
+    radius: tpl.radius, mass: tpl.mass,
+    hp: tpl.hp,
+    maxHp: tpl.hp,
+    attack: tpl.attack,
+    attackRange: tpl.attackRange,
+    attackCooldown: 0,
+    baseAttackCooldown: tpl.attackCooldown,
+    lastAttack: 0,
+    color: DYNASTIES[team].color,
+    stunned: 0
+  };
+  entities.push(ent);
+  return ent;
+}
+
+function createProjectile(x,y,vx,vy,damage,ownerTeam){
+  const p = { id: nextId++, kind:'proj', x,y,vx,vy, radius:6, life:4000, damage, ownerTeam };
+  projectiles.push(p);
+  return p;
+}
+
+// ---------- Physics helpers ----------
+function integrate(dt){
+  for(const e of entities){
+    if(e.kind !== 'unit') continue;
+    // simple gravity (small)
+    e.vy += 0.6 * dt;
+    // ground collision
+    if(e.y + e.radius + e.vy*dt > H - 60){
+      e.y = H - 60 - e.radius;
+      e.vy = 0;
+    } else {
+      e.y += e.vy * dt;
+    }
+    // horizontal motion goal: move toward enemy center
+    if(e.stunned > 0){ e.stunned -= dt*1000; e.vx *= 0.96; } else {
+      // find nearest enemy
+      const enemy = entities.filter(q=>q.kind==='unit' && q.team !== e.team).sort((a,b)=>Math.hypot(a.x-e.x,a.y-e.y)-Math.hypot(b.x-e.x,b.y-e.y))[0];
+      if(enemy){
+        const dx = enemy.x - e.x;
+        const desiredVx = Math.sign(dx) * (UNIT_TEMPLATES[e.type].speed + (e.type==='cavalry'?0.9:0));
+        e.vx += (desiredVx - e.vx) * 0.08;
+      }
+      e.x += e.vx * dt;
+    }
+    // bounds
+    e.x = clamp(e.x, 20 + e.radius, W - 20 - e.radius);
+    // cooldowns
+    e.attackCooldown = Math.max(0, (e.attackCooldown || 0) - dt*1000);
+  }
+
+  // projectiles integrate
+  for(const p of projectiles){
+    p.vy += 0.02 * dt * 60; // slight gravity
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt*1000;
+  }
+  // cleanup dead projectiles
+  for(let i=projectiles.length-1;i>=0;i--) if(projectiles[i].life<=0) projectiles.splice(i,1);
+}
+
+// simple circle collision resolution between units (separate & apply impulse & damage on overlap)
+function resolveCollisions(){
+  // unit-unit
+  for(let i=0;i<entities.length;i++){
+    const A = entities[i];
+    if(A.kind!=='unit') continue;
+    for(let j=i+1;j<entities.length;j++){
+      const B = entities[j];
+      if(B.kind!=='unit') continue;
+      const dx = B.x - A.x, dy = B.y - A.y;
+      const dist = Math.hypot(dx,dy);
+      const minDist = A.radius + B.radius;
+      if(dist < minDist && dist > 0){
+        const overlap = (minDist - dist) * 0.6;
+        const nx = dx / dist, ny = dy / dist;
+        const totalMass = A.mass + B.mass;
+        // separate
+        A.x -= nx * overlap * (B.mass/totalMass);
+        A.y -= ny * overlap * (B.mass/totalMass);
+        B.x += nx * overlap * (A.mass/totalMass);
+        B.y += ny * overlap * (A.mass/totalMass);
+        // relative velocity
+        const rvx = B.vx - A.vx, rvy = B.vy - A.vy;
+        const relVelAlongNormal = rvx*nx + rvy*ny;
+        if(relVelAlongNormal > 0) continue;
+        const e = 0.28; // restitution
+        const jImpulse = -(1+e) * relVelAlongNormal / (1/A.mass + 1/B.mass);
+        const ix = jImpulse * nx, iy = jImpulse * ny;
+        A.vx -= ix / A.mass; A.vy -= iy / A.mass;
+        B.vx += ix / B.mass; B.vy += iy / B.mass;
+        // apply damage on collision if teams differ and relative speed high
+        if(A.team !== B.team){
+          const dmg = Math.round(Math.abs(relVelAlongNormal) * 6);
+          if(dmg > 3){
+            A.hp -= dmg * 0.7;
+            B.hp -= dmg * 0.7;
+            spawnImpact((A.x+B.x)/2, (A.y+B.y)/2, Math.min(12, dmg/2));
+          }
+        }
+      }
+    }
+  }
+  // projectile collisions
+  for(let i=projectiles.length-1;i>=0;i--){
+    const p = projectiles[i];
+    for(let j=entities.length-1;j>=0;j--){
+      const u = entities[j];
+      if(u.kind !== 'unit') continue;
+      if(u.team === p.ownerTeam) continue;
+      const dx = u.x - p.x, dy = u.y - p.y;
+      const dist = Math.hypot(dx,dy);
+      if(dist < u.radius + p.radius){
+        u.hp -= p.damage;
+        spawnImpact(p.x,p.y,6);
+        // knockback
+        u.vx += Math.sign(dx) * 0.8;
+        u.vy -= 1.2;
+        projectiles.splice(i,1);
+        break;
+      }
+    }
+  }
+}
+
+// ---------- Combat: units attack when in range ----------
+function handleAttacks(dt){
+  const timeNow = performance.now();
+  for(const u of entities){
+    if(u.kind !== 'unit') continue;
+    // skip dead
+    if(u.hp <= 0) continue;
+    // find target
+    let target = null;
+    let minD = Infinity;
+    for(const t of entities){
+      if(t.kind!=='unit' || t.team === u.team) continue;
+      const d = Math.hypot(t.x - u.x, t.y - u.y);
+      if(d < minD){ minD = d; target = t; }
+    }
+    if(!target) continue;
+    // if archer & in range -> fire projectile
+    if(u.type === 'archer' && minD <= u.attackRange && (timeNow - (u.lastAttack||0)) > u.baseAttackCooldown){
+      u.lastAttack = timeNow;
+      const angle = Math.atan2(target.y - u.y, target.x - u.x);
+      const speed = 8 + Math.random()*2;
+      createProjectile(u.x + Math.cos(angle)*(u.radius+6), u.y + Math.sin(angle)*(u.radius+6) - 6, Math.cos(angle)*speed, Math.sin(angle)*speed - 1.2, u.attack, u.team);
+      spawnImpact(u.x, u.y, 2, true);
+    }
+    // melee: if close, damage
+    if(u.type !== 'archer' && minD <= u.attackRange){
+      if((timeNow - (u.lastAttack||0)) > u.baseAttackCooldown){
+        u.lastAttack = timeNow;
+        // apply damage & knockback
+        target.hp -= u.attack;
+        target.vx += Math.sign(target.x - u.x) * 1.6;
+        target.vy -= 1.2;
+        spawnImpact((u.x+target.x)/2, (u.y+target.y)/2, 10);
+      }
+    }
+  }
+}
+
+// ---------- Spawn impact particles ----------
+let particles = [];
+function spawnImpact(x,y,count, small=false){
+  for(let i=0;i<(count||8);i++){
+    particles.push({
+      x,y, vx: (Math.random()-0.5)*4, vy: (Math.random()-0.8)*3, life: 30 + Math.random()*30,
+      size: small?3: (3 + Math.random()*4),
+      color: small? 'rgba(255,230,120,0.95)':'rgba(255,120,90,0.95)'
+    });
+  }
+}
+
+// ---------- Super Moves (themed) ----------
+function triggerSuper(teamKey, side){
+  const team = teamKey;
+  const spec = DYNASTIES[team].special;
+  log(`${team} triggers super: ${spec}`);
+  // find center of that side's units (or default side center)
+  let cx = (side==='left') ? 200 : W-200, cy = H/2;
+  const unitsOfTeam = entities.filter(u=>u.kind==='unit' && u.team === team);
+  if(unitsOfTeam.length) { cx = unitsOfTeam.reduce((s,u)=>s+u.x,0)/unitsOfTeam.length; cy = unitsOfTeam.reduce((s,u)=>s+u.y,0)/unitsOfTeam.length; }
+  if(spec === 'scrolls'){
+    // spawn many small upward scroll particles (visual)
+    for(let i=0;i<120;i++) spawnImpact(cx + rand(-120,120), cy + rand(-40,40), 6, true);
+    // apply push to enemies
+    for(const e of entities) if(e.team !== team && e.kind==='unit'){ e.vx += (e.x < cx ? -1.4 : 1.4); e.vy -= 2; e.hp -= 8; }
+  } else if(spec === 'holo'){
+    // slow enemies temporarily (stun)
+    for(const e of entities) if(e.team !== team && e.kind==='unit'){ e.stunned = 600 + Math.random()*800; e.hp -= 6; spawnImpact(e.x,e.y,6,true); }
+  } else if(spec === 'storm'){
+    // lightning strikes random enemy positions
+    const enemies = entities.filter(e=>e.team !== team && e.kind==='unit');
+    for(let i=0;i<6;i++){
+      const t = enemies[Math.floor(Math.random()*enemies.length)];
+      if(t){ t.hp -= 18; t.vy -= 3; spawnImpact(t.x,t.y,20); }
+    }
+  } else if(spec === 'fireworks'){
+    // big fireworks -> damage close enemies
+    for(let i=0;i<30;i++) spawnImpact(cx + rand(-220,220), cy + rand(-140,140), 10);
+    for(const e of entities) if(e.team !== team && Math.hypot(e.x-cx,e.y-cy) < 220) { e.hp -= 16; e.vy -= 3; }
+  } else if(spec === 'flowers'){
+    // heal friendly units a bit and create petals
+    for(const f of entities) if(f.team === team && f.kind==='unit'){ f.hp = Math.min(f.maxHp, f.hp + 20); spawnImpact(f.x,f.y,8,true); }
+  } else {
+    // default: small push & damage
+    for(const e of entities) if(e.team !== team) { e.vx += (e.x < cx ? -1 : 1) * 1.6; e.hp -= 6; spawnImpact(e.x,e.y,6); }
+  }
+}
+
+// ---------- Render ----------
+function render(){
+  // background
+  ctx.clearRect(0,0,W,H);
+  // ground
+  ctx.fillStyle = '#071f2b';
+  ctx.fillRect(0, H-60, W, 60);
+  // draw projectiles
+  for(const p of projectiles){
+    ctx.beginPath(); ctx.fillStyle = 'rgba(255,240,160,0.95)'; ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2); ctx.fill();
+  }
+  // draw units (team color)
+  for(const u of entities){
+    // body
+    ctx.beginPath();
+    ctx.fillStyle = u.color || '#ddd';
+    ctx.arc(u.x, u.y, u.radius, 0, Math.PI*2);
+    ctx.fill();
+    // hp bar
+    const w = u.radius*2;
+    const hpPct = Math.max(0, u.hp / u.maxHp);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(u.x - u.radius, u.y - u.radius - 10, w, 6);
+    ctx.fillStyle = 'rgba(80,220,120,0.9)';
+    ctx.fillRect(u.x - u.radius, u.y - u.radius - 10, w * hpPct, 6);
+    // outline for enemy teams or stun indicator
+    if(u.stunned > 0){
+      ctx.strokeStyle = 'rgba(200,200,255,0.9)'; ctx.lineWidth = 2; ctx.stroke();
+    } else {
+      ctx.lineWidth = 0.6; ctx.strokeStyle = '#000'; ctx.stroke();
+    }
+  }
+
+  // particles
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.06;
+    p.life -= 1;
+    if(p.life <= 0) particles.splice(i,1);
+    else {
+      ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.size, p.size);
+    }
+  }
+
+  // HUD stats
+  document.getElementById('leftCount').innerText = entities.filter(e=>e.kind==='unit' && e.side==='left' && e.hp>0).length;
+  document.getElementById('rightCount').innerText = entities.filter(e=>e.kind==='unit' && e.side==='right' && e.hp>0).length;
+}
+
+// ---------- Simulation loop ----------
+let lastT = performance.now();
+function step(){
+  const t = performance.now();
+  const dt = (t - lastT)/16.66 * (1/ (1/timeScale)) ; // normalized roughly to 60fps
+  lastT = t;
+  // allow speed slider
+  const slider = parseFloat(document.getElementById('speed').value);
+  timeScale = slider;
+
+  integrate(dt);
+  handleAttacks(dt);
+  resolveCollisions();
+
+  // remove dead entities and award points if team cleared
+  for(let i=entities.length-1;i>=0;i--){
+    const e = entities[i];
+    if(e.kind==='unit' && e.hp <= 0){
+      spawnImpact(e.x, e.y, 10);
+      entities.splice(i,1);
+    }
+  }
+
+  // update projectiles cleaned earlier in integrate & collisions
+
+  elapsed += (t-lastT)/1000;
+  render();
+
+  // round timer display (approx)
+  document.getElementById('time').innerText = (Math.round((performance.now() - roundStart)/100)/10).toFixed(1);
+
+  // win check
+  const leftAlive = entities.some(e=>e.kind==='unit' && e.side==='left');
+  const rightAlive = entities.some(e=>e.kind==='unit' && e.side==='right');
+  if(!leftAlive || !rightAlive){
+    // award winner
+    const winner = leftAlive ? selectedLeft : (rightAlive ? selectedRight : null);
+    if(winner){
+      log('Round winner: ' + winner);
+      leaderboard[winner] = (leaderboard[winner]||0) + 1;
+      localStorage.setItem('arena_leaderboard_v1', JSON.stringify(leaderboard));
+      updateLBUI();
+    } else {
+      log('Round draw.');
+    }
+    // auto-reset after pause
+    setTimeout(()=>{ resetBattle(); }, 1400);
+  }
+
+  requestAnimationFrame(step);
+}
+
+// ---------- UI wiring ----------
+const leftTeamSel = document.getElementById('leftTeam');
+const rightTeamSel = document.getElementById('rightTeam');
+const lbList = document.getElementById('lbList');
+
+for(const k of TEAM_KEYS){ const opt = document.createElement('option'); opt.value = k; opt.innerText = k; leftTeamSel.appendChild(opt.cloneNode(true)); rightTeamSel.appendChild(opt.cloneNode(true)); }
+leftTeamSel.value = TEAM_KEYS[0]; rightTeamSel.value = TEAM_KEYS[1];
+let selectedLeft = leftTeamSel.value, selectedRight = rightTeamSel.value;
+
+leftTeamSel.addEventListener('change', ()=> selectedLeft = leftTeamSel.value);
+rightTeamSel.addEventListener('change', ()=> selectedRight = rightTeamSel.value);
+
+document.getElementById('spawnLeft').addEventListener('click', ()=> spawnFromUI('left'));
+document.getElementById('spawnRight').addEventListener('click', ()=> spawnFromUI('right'));
+document.getElementById('superLeft').addEventListener('click', ()=> triggerSuper(selectedLeft, 'left'));
+document.getElementById('superRight').addEventListener('click', ()=> triggerSuper(selectedRight, 'right'));
+document.getElementById('resetBtn').addEventListener('click', ()=> resetBattle());
+document.getElementById('clearLB').addEventListener('click', ()=>{ leaderboard = {}; localStorage.removeItem('arena_leaderboard_v1'); updateLBUI(); });
+
+document.getElementById('autoToggle').addEventListener('change', (e)=>{
+  autoSpawn = e.target.checked;
+  if(autoSpawn){
+    autoInterval = setInterval(()=> {
+      const side = Math.random() > 0.5 ? 'left':'right';
+      spawnRandom(side);
+    }, 900);
+  } else { clearInterval(autoInterval); autoInterval = null; }
+});
+
+// spawn helpers
+function spawnFromUI(side){
+  const t = document.getElementById('unitType').value;
+  const team = (side==='left') ? selectedLeft : selectedRight;
+  const u = createUnit(team, side, t);
+  u.side = side;
+  u.vx = (side==='left')? Math.abs(u.vx): -Math.abs(u.vx);
+  log(`${team} spawned ${t} on ${side}`);
+}
+
+function spawnRandom(side){
+  const types = Object.keys(UNIT_TEMPLATES);
+  const t = types[Math.floor(Math.random()*types.length)];
+  const team = (side==='left') ? selectedLeft : selectedRight;
+  const u = createUnit(team, side, t);
+  u.side = side;
+  u.vx = (side==='left')? Math.abs(u.vx): -Math.abs(u.vx);
+}
+
+// leaderboard UI
+function updateLBUI(){
+  lbList.innerHTML = '';
+  const sorted = Object.entries(leaderboard).sort((a,b)=>b[1]-a[1]);
+  for(const [k,v] of sorted) {
+    const d = document.createElement('div');
+    d.innerHTML = `<strong style="color:${DYNASTIES[k].color}">${k}</strong>: ${v}`;
+    lbList.appendChild(d);
+  }
+}
+updateLBUI();
+
+// round control
+let roundStart = performance.now();
+function resetBattle(){
+  entities = []; projectiles = []; particles = []; nextId = 1;
+  round++; roundStart = performance.now();
+  document.getElementById('round').innerText = round;
+  log('Battle reset. Round ' + round);
+}
+
+// start simulation
+roundStart = performance.now();
+lastT = performance.now();
+step();
+
+// expose API
+window.arenaAPI = {
+  spawnUnit: (team, side, type) => { const u = createUnit(team, side, type); u.side = side; return u; },
+  triggerSuper,
+  resetBattle
+};
+
+</script>
+</body>
+</html>

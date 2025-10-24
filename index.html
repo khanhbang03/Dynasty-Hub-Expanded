@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dynasty Hub — Five Dynasties</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="hub-header">
+    <h1>⚔️ Dynasty Hub — Expanded</h1>
+    <p class="subtitle">Click a dynasty to enter its page — each has birds, a Gunny server visualization and a unique special move.</p>
+  </header>
+
+  <main class="hub-grid">
+    <a class="card" href="dynasties/lam.html">
+      <div class="card-icon">📜</div>
+      <h3>Lê Văn Lâm</h3>
+      <p>Glowing aura & floating scrolls</p>
+    </a>
+
+    <a class="card" href="dynasties/simeon.html">
+      <div class="card-icon">🤖</div>
+      <h3>Simeon Hansen</h3>
+      <p>Futuristic holograms & AI cores</p>
+    </a>
+
+    <a class="card" href="dynasties/hai.html">
+      <div class="card-icon">🌩️</div>
+      <h3>Phạm Hoàng Hải</h3>
+      <p>Storm effects & sword particles</p>
+    </a>
+
+    <a class="card" href="dynasties/khoi.html">
+      <div class="card-icon">🎆</div>
+      <h3>Trần Khôi Nguyên</h3>
+      <p>Fireworks & soaring birds</p>
+    </a>
+
+    <a class="card" href="dynasties/thuy.html">
+      <div class="card-icon">🌸</div>
+      <h3>Phạm Bích Thùy</h3>
+      <p>Flowers & butterflies</p>
+    </a>
+  </main>
+
+  <footer class="hub-footer">
+    <small>Built for the multi-dynasty battle simulator project — each page is independent and uses shared.js for common animation helpers.</small>
+  </footer>
+
+  <script>
+    // simple analytics: track visit counts per dynasty in localStorage
+    const visits = JSON.parse(localStorage.getItem('dynasty_visits')||'{}');
+    function inc(k){ visits[k]=(visits[k]||0)+1; localStorage.setItem('dynasty_visits', JSON.stringify(visits)); }
+    // increment Hub open
+    inc('hub');
+  </script>
+</body>
+</html>
